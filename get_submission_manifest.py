@@ -2,6 +2,8 @@
 """
 This script retreives the submission ids of
 the WSB subreddit based on time period and keyword.
+
+usage: $python3 get_submission_manifest.py QUERY_TYPE TIME_PERIOD CUSTOM_QUERY
 """
 import sys
 import datetime as dt
@@ -24,6 +26,7 @@ def getSubmissionManifest(query, period='year'):
     submission_ids = [row[1] for row in sub_list]
     submission = pd.DataFrame(sub_list, columns=['sub_created_utc', 'sub_id', 'sub_title'])
     return submission, submission_ids
+
 
 # Parsing Inputs
 query_type = sys.argv[1]
