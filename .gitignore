@@ -2,3 +2,4 @@
 data/*
 creds.json
 test_zone.ipynb
+.DS_Store
