@@ -1,0 +1,353 @@
+---
+title: "GME Megathread Analysis"
+author: "Amelia Chu"
+date: "4/30/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+libraries <- c("ldatuning", "topicmodels", "ggplot2", "dplyr","utf8", "rjson", "quanteda", "lubridate", "parallel", "doParallel", "tidytext", "stringi", "stringr", "tidyr","readtext","emojifont", "stm")
+# 
+lapply(libraries, require, character.only = TRUE)
+load.emojifont("OpenSansEmoji.ttf")
+```
+
+## Reading in GME Megathread Data
+```{r gme-data}
+comments_data <- read.csv("/Users/ameliachu/Google\ Drive/Spring 2021/Text\ as\ Data/final_project/data/reddit/gme/gme_master_data_1611233441_1618627983.csv")
+names(comments_data) <- c('doc_id','doc_name', 'text', 'score','author','created_utc')
+
+# Creating Corpus Object from comments_data
+corp_comments <- corpus(comments_data, text_field = 'text', docvars =select)
+
+# Creating a DFM - remove punctuation, stopwords, numbers, and lowercase
+comment_dfm <-dfm(comments_data$text, stem = F, remove_punct = T, tolower = T, remove_numbers= TRUE, remove = c(stopwords("english"), "http","https"))
+
+# Ensuring each doc has at least 1 token
+comment_dfm <- dfm_subset(comment_dfm, ntoken(comment_dfm) > 0)
+```
+
+## Taking a Look at Collocations
+```{r gme-collocations}
+corp_comments_tokens <- tokens(corp_comments)
+
+tokens_no_stop <- corp_comments_tokens %>% 
+  tokens_remove(pattern = stopwords("english"))
+
+textstat_collocations(tokens_no_stop)
+# https://www.afr.com/markets/equity-markets/from-diamond-hands-to-stonks-internet-stocks-slang-explained-20210209-p570rr
+```
+
+## Identify Optimal Number of Topics
+```{r gme-optim-k}
+k_optimize_comments <- FindTopicsNumber(
+  comment_dfm,
+  topics = seq(from = 2, to = 8, by = 2),
+  metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010", "Deveaud2014"),
+  method = "Gibbs",
+  control = list(seed = 1992),
+  mc.cores = detectCores(), # to us all cores available
+  verbose = TRUE
+)
+# Minimize: Arun and Cao
+# Maximize: Griffiths and Devaeaud
+
+FindTopicsNumber_plot(k_optimize_comments)
+```
+
+```{r gme-optim-k}
+k_optimize_comments <- FindTopicsNumber(
+  comment_dfm,
+  topics = seq(from = 2, to = 100, by = 2),
+  metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010", "Deveaud2014"),
+  method = "Gibbs",
+  control = list(seed = 1994),
+  mc.cores = detectCores(), # to us all cores available
+  verbose = TRUE
+)
+# Minimize: Arun and Cao
+# Maximize: Griffiths and Devaeaud
+
+FindTopicsNumber_plot(k_optimize_comments)
+```
+```{r gme-optim-k}
+k_optimize_comments <- FindTopicsNumber(
+  comment_dfm,
+  topics = seq(from = 2, to = 50, by = 2),
+  metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010", "Deveaud2014"),
+  method = "Gibbs",
+  control = list(seed = 192),
+  mc.cores = detectCores(), # to us all cores available
+  verbose = TRUE
+)
+# Minimize: Arun and Cao
+# Maximize: Griffiths and Devaeaud
+
+FindTopicsNumber_plot(k_optimize_comments)
+```
+## Identify Topics: LDA Model
+```{r lda}
+k <- 30
+system.time(
+  comments_lda_tm <- LDA(comment_dfm, k = k, method = "Gibbs",  control = list(seed = 1994)))
+
+comments_lda_topics <- tidy(comments_lda_tm, matrix = "beta") 
+head(comments_lda_topics)
+saveRDS(comments_lda_tm, "/Users/ameliachu/Google\ Drive/Spring 2021/Text\ as\ Data/final_project/comments_lda_tm_30.rds")
+```
+
+```{r lda-visual}
+comments_lda_top_terms <- comments_lda_topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+head(comments_lda_top_terms)
+
+comments_lda_top_terms%>%
+  mutate(term = reorder(term, beta)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip()
+# Future: Create for different seeds (3) and k-1, k+1
+```
+```{r lda-comment-categories-by-topics}
+# Get top 3 topic associated with each comment
+comments_topics <- topics(comments_lda_tm, k=3)
+comments_topics_df <- t(as.data.frame(comments_topics))
+comments_topics_df <- cbind(text_id = rownames(comments_topics_df), comments_topics_df)
+comments_topics_df <- as.data.frame(as_tibble(comments_topics_df))  %>% rename(topicA=V2, topicB=V3, topicC=V4) %>% mutate(doc_id = str_sub(text_id, start=5,end=-1))
+
+# Reran kmeans with different comment topics: 1, 2, 3
+comments_topics_1 <- topics(comments_lda_tm, k=1)
+comments_topics_1_df <- as.data.frame(comments_topics_1)
+comments_topics_1_df <- cbind(text_id = rownames(comments_topics_1_df), comments_topics_1_df)
+comments_topics_1_df <- as.data.frame(as_tibble(comments_topics_1_df)) %>% rename(topicA=comments_topics_1) %>% mutate(doc_id = str_sub(text_id, start=5,end=-1))
+
+comments_topics_2 <- topics(comments_lda_tm, k=2)
+comments_topics_2_df <- t(as.data.frame(comments_topics_2))
+comments_topics_2_df <- cbind(text_id = rownames(comments_topics_2_df), comments_topics_2_df)
+comments_topics_2_df <- as.data.frame(as_tibble(comments_topics_2_df))%>% rename(topicA=V2, topicB=V3) %>% mutate(doc_id = str_sub(text_id, start=5,end=-2))
+
+# FUTURE: Assign Topics back to Text id with likelihood included.
+comments_topics_categorization <- comments_topics_df %>% 
+  select(doc_id, topicA, topicB, topicC) %>% 
+  mutate(topic1 = case_when(topicA == 1 | topicB== 1 | topicC== 1 ~ 1 , TRUE ~ 0),
+         topic2 = case_when(topicA == 2 | topicB== 2 | topicC== 2 ~ 1 , TRUE ~ 0),
+         topic3 = case_when(topicA == 3 | topicB== 3 | topicC== 3 ~ 1 , TRUE ~ 0),
+         topic4 = case_when(topicA == 4 | topicB== 4 | topicC== 4 ~ 1 , TRUE ~ 0),
+         topic5 = case_when(topicA == 5 | topicB== 5 | topicC== 5 ~ 1 , TRUE ~ 0),
+         topic6 = case_when(topicA == 6 | topicB== 6 | topicC== 6 ~ 1 , TRUE ~ 0))
+
+comments_topics_categorization_1 <- comments_topics_1_df %>% 
+  mutate(topic1 = case_when(topicA == 1  ~ 1 , TRUE ~ 0),
+         topic2 = case_when(topicA == 2  ~ 1 , TRUE ~ 0),
+         topic3 = case_when(topicA == 3  ~ 1 , TRUE ~ 0),
+         topic4 = case_when(topicA == 4 ~ 1 , TRUE ~ 0),
+         topic5 = case_when(topicA == 5 ~ 1 , TRUE ~ 0),
+         topic6 = case_when(topicA == 6  ~ 1 , TRUE ~ 0))
+
+comments_topics_categorization_2 <- comments_topics_2_df  %>% 
+  select(doc_id, topicA, topicB) %>% 
+  mutate(topic1 = case_when(topicA == 1 | topicB== 1 ~ 1 , TRUE ~ 0),
+         topic2 = case_when(topicA == 2 | topicB== 2 ~ 1 , TRUE ~ 0),
+         topic3 = case_when(topicA == 3 | topicB== 3 ~ 1 , TRUE ~ 0),
+         topic4 = case_when(topicA == 4 | topicB== 4 ~ 1 , TRUE ~ 0),
+         topic5 = case_when(topicA == 5 | topicB== 5 ~ 1 , TRUE ~ 0),
+         topic6 = case_when(topicA == 6 | topicB== 6 ~ 1 , TRUE ~ 0))
+```
+
+```{r get-topics-by-author}
+author_info <- comments_data %>% select("author", "doc_id", "score", "created_utc") %>% mutate(doc_id = as.character(doc_id ))
+topics_by_author <- comments_topics_categorization %>% left_join(author_info, by="doc_id") %>% select("created_utc", "doc_id", "author","score","topic1","topic2","topic3","topic4","topic5","topic6")
+topics_by_author_summary <- topics_by_author %>% 
+  filter(author!="") %>%
+  group_by(author) %>% 
+  summarise(n_topic1 = sum(topic1),
+            n_topic2 = sum(topic2),
+            n_topic3 = sum(topic3),
+            n_topic4 = sum(topic4),
+            n_topic5 = sum(topic5),
+            n_topic6 = sum(topic6))
+# topics over time
+# most liked topics
+```
+
+```{r norm-prep}
+# normalize n_topicx (x-min(x))/(max(x)-min(x))
+min_topic_1 <- min(topics_by_author_summary$n_topic1)
+max_topic_1 <- max(topics_by_author_summary$n_topic1)
+min_topic_2 <- min(topics_by_author_summary$n_topic2)
+max_topic_2 <- max(topics_by_author_summary$n_topic2)
+min_topic_3 <- min(topics_by_author_summary$n_topic3)
+max_topic_3 <- max(topics_by_author_summary$n_topic3)
+min_topic_4 <- min(topics_by_author_summary$n_topic4)
+max_topic_4 <- max(topics_by_author_summary$n_topic4)
+min_topic_5 <- min(topics_by_author_summary$n_topic5)
+max_topic_5 <- max(topics_by_author_summary$n_topic5)
+min_topic_6 <- min(topics_by_author_summary$n_topic6)
+max_topic_6 <- max(topics_by_author_summary$n_topic6)
+```
+
+## K-Means Clustering to Identify Author Groups.
+
+```{r kmeans-cluster-authors}
+kclusters_3 <- kmeans(topics_by_author_summary[,2:7],3)
+kclusters_6 <- kmeans(topics_by_author_summary[,2:7],6)
+kclusters_8 <- kmeans(topics_by_author_summary[,2:7],8)
+kclusters_10 <- kmeans(topics_by_author_summary[,2:7],10)
+
+topics_by_author_summary$assigned_cluster_3 <- as.factor(kclusters_3$cluster)
+topics_by_author_summary$assigned_cluster_6 <- as.factor(kclusters_6$cluster)
+topics_by_author_summary$assigned_cluster_8 <- as.factor(kclusters_8$cluster)
+topics_by_author_summary$assigned_cluster_10 <- as.factor(kclusters_10$cluster)
+```
+
+```{r kmeans-cluster-authors-logged}
+topics_by_author_summary_logged <- topics_by_author_summary %>% 
+  mutate(n_topic1 = log(n_topic1+0.0001),
+         n_topic2 = log(n_topic2+0.0001),
+         n_topic3 = log(n_topic3+0.0001),
+         n_topic4 = log(n_topic4+0.0001),
+         n_topic5 = log(n_topic5+0.0001),
+         n_topic6 = log(n_topic6+0.0001))
+kclusters_3 <- kmeans(topics_by_author_summary_logged[,2:7],3)
+kclusters_6 <- kmeans(topics_by_author_summary_logged[,2:7],6)
+kclusters_8 <- kmeans(topics_by_author_summary_logged[,2:7],8)
+kclusters_10 <- kmeans(topics_by_author_summary_logged[,2:7],10)
+
+topics_by_author_summary_logged$assigned_cluster_3 <- as.factor(kclusters_3$cluster)
+topics_by_author_summary_logged$assigned_cluster_6 <- as.factor(kclusters_6$cluster)
+topics_by_author_summary_logged$assigned_cluster_8 <- as.factor(kclusters_8$cluster)
+topics_by_author_summary_logged$assigned_cluster_10 <- as.factor(kclusters_10$cluster)
+
+topics_by_author_summary_logged %>% group_by(assigned_cluster_10) %>% summarise(n_authors=n_distinct(author))
+```
+
+## Analysis of Topics
+```{r visual-for-kmeans-analysis}
+visual_aid_clustering_author <- topics_by_author_summary %>% 
+  select("author", "n_topic1","n_topic2","n_topic3","n_topic4","n_topic5","n_topic6" ) %>% 
+  mutate(num_comments = n_topic1 + n_topic2 + n_topic3 + n_topic4 + n_topic5 + n_topic6,
+         presence_of_topic1 = case_when(n_topic1 > 0 ~ 1, TRUE ~ 0),
+         presence_of_topic2 = case_when(n_topic2 > 0 ~ 1, TRUE ~ 0),
+         presence_of_topic3 = case_when(n_topic3 > 0 ~ 1, TRUE ~ 0),
+         presence_of_topic4 = case_when(n_topic4 > 0 ~ 1, TRUE ~ 0),
+         presence_of_topic5 = case_when(n_topic5 > 0 ~ 1, TRUE ~ 0),
+         presence_of_topic6 = case_when(n_topic6 > 0 ~ 1, TRUE ~ 0),
+         norm_topic1 = (n_topic1 - min_topic_1) / (max_topic_1 - min_topic_1),
+         norm_topic2 = (n_topic2 - min_topic_2) / (max_topic_2 - min_topic_2),
+         norm_topic3 = (n_topic3 - min_topic_3) / (max_topic_3 - min_topic_3),
+         norm_topic4 = (n_topic4 - min_topic_4) / (max_topic_4 - min_topic_4),
+         norm_topic5 = (n_topic5 - min_topic_5) / (max_topic_5 - min_topic_5),
+         norm_topic5 = (n_topic5 - min_topic_5) / (max_topic_5 - min_topic_5),
+         norm_topic6 = (n_topic6 - min_topic_6) / (max_topic_6 - min_topic_6))
+  
+fig_4_df_0 <- topics_by_author_summary_logged %>% rename(log_n_topic1=n_topic1, log_n_topic2=n_topic2,log_n_topic3=n_topic3, log_n_topic4=n_topic4, log_n_topic5=n_topic5, log_n_topic6=n_topic6) %>% left_join(visual_aid_clustering_author, by="author") 
+```
+
+```{r}
+# Topic distribution by Cluster: for each kmeans model => groupby cluster count (x_topics)
+fig4_k10 <- fig_4_df_0 %>% group_by(assigned_cluster_10) %>% summarise(presence_of_topic1=sum(presence_of_topic1),
+                                                          presence_of_topic2=sum(presence_of_topic2),
+                                                          presence_of_topic3=sum(presence_of_topic3),
+                                                          presence_of_topic4=sum(presence_of_topic4),
+                                                          presence_of_topic5=sum(presence_of_topic5),
+                                                          presence_of_topic6=sum(presence_of_topic6),
+                                                          avg_n_topic1=mean(n_topic1),
+                                                          avg_n_topic2=mean(n_topic2),
+                                                          avg_n_topic3=mean(n_topic3),
+                                                          avg_n_topic4=mean(n_topic4),
+                                                          avg_n_topic5=mean(n_topic5),
+                                                          avg_n_topic6=mean(n_topic6),  
+                                                          avg_n_comments=mean(num_comments),
+                                                          median_n_comments=median(num_comments),
+                                                          n_authors=n_distinct(author))
+
+fig4_k8 <- fig_4_df_0%>% group_by(assigned_cluster_8) %>% summarise(presence_of_topic1=sum(presence_of_topic1),
+                                                                                presence_of_topic2=sum(presence_of_topic2),
+                                                                                presence_of_topic3=sum(presence_of_topic3),
+                                                                                presence_of_topic4=sum(presence_of_topic4),
+                                                                                presence_of_topic5=sum(presence_of_topic5),
+                                                                                presence_of_topic6=sum(presence_of_topic6),
+                                                         avg_n_topic1=mean(n_topic1),
+                                                                    avg_n_topic2=mean(n_topic2),
+                                                                    avg_n_topic3=mean(n_topic3),
+                                                                    avg_n_topic4=mean(n_topic4),
+                                                                    avg_n_topic5=mean(n_topic5),
+                                                                    avg_n_topic6=mean(n_topic6), 
+                                                                                avg_n_comments=mean(num_comments),
+                                                                                median_n_comments=median(num_comments),
+                                                                                n_authors=n_distinct(author))
+
+fig4_k6 <- fig_4_df_0 %>% group_by(assigned_cluster_6) %>% summarise(presence_of_topic1=sum(presence_of_topic1),
+                                                                                presence_of_topic2=sum(presence_of_topic2),
+                                                                                presence_of_topic3=sum(presence_of_topic3),
+                                                                                presence_of_topic4=sum(presence_of_topic4),
+                                                                                presence_of_topic5=sum(presence_of_topic5),
+                                                                                presence_of_topic6=sum(presence_of_topic6),
+                                                                               avg_n_topic1=mean(n_topic1),
+                                                                    avg_n_topic2=mean(n_topic2),
+                                                                    avg_n_topic3=mean(n_topic3),
+                                                                    avg_n_topic4=mean(n_topic4),
+                                                                    avg_n_topic5=mean(n_topic5),
+                                                                    avg_n_topic6=mean(n_topic6),  
+                                                                                avg_n_comments=mean(num_comments),
+                                                                                median_n_comments=median(num_comments),
+                                                                                n_authors=n_distinct(author))
+
+fig_4_df_0 %>% group_by(assigned_cluster_3) %>% summarise(presence_of_topic1=sum(presence_of_topic1),
+                                                                                presence_of_topic2=sum(presence_of_topic2),
+                                                                                presence_of_topic3=sum(presence_of_topic3),
+                                                                                presence_of_topic4=sum(presence_of_topic4),
+                                                                                presence_of_topic5=sum(presence_of_topic5),
+                                                                                presence_of_topic6=sum(presence_of_topic6),
+                                                                                avg_n_comments=mean(num_comments),
+                                                                                median_n_comments=median(num_comments),
+                                                                                n_authors=n_distinct(author))
+# write.csv(fig4_k3,"/Users/ameliachu/Google\ Drive/Spring 2021/Text\ as\ Data/final_project/table1_k3.csv")
+
+# Average Author Comments by Cluster: for each kmeans model => groupby cluster, avg(group by author, sum (n_comments))
+# model 8: cluster 5 - spammers?
+# normalize n_topicx (x-min(x))/(max(x)-min(x))
+
+# Future: one topic per comment, two topics per comment. then cluster
+# Clustering k = 3-10 see what persists
+```
+
+```{r analysis-topic-comments}
+topic_1_comments <- topics_by_author %>% filter(topic1==1) %>% select(doc_id) %>% mutate(doc_id = as.integer(doc_id)) %>% left_join(comments_data, by="doc_id") # %>% select(text)
+topic_2_comments <- topics_by_author %>% filter(topic2==1) %>% select(doc_id) %>% mutate(doc_id = as.integer(doc_id)) %>% left_join(comments_data, by="doc_id")# %>% select(text)
+topic_3_comments <- topics_by_author %>% filter(topic3==1) %>% select(doc_id) %>% mutate(doc_id = as.integer(doc_id)) %>% left_join(comments_data, by="doc_id") #%>% select(text)
+topic_4_comments <- topics_by_author %>% filter(topic4==1) %>% select(doc_id) %>% mutate(doc_id = as.integer(doc_id)) %>% left_join(comments_data, by="doc_id") #%>% select(text)
+topic_6_comments <- topics_by_author %>% filter(topic6==1) %>% select(doc_id) %>% mutate(doc_id = as.integer(doc_id)) %>% left_join(comments_data, by="doc_id") #%>% select(text)
+# Iconic Topic 5: I AM HOLDING, WHETHER IT GOES TO ZERO OR THE MOON. THIS IS WHAT WE CAME HERE TO DO, APETARDS.  \U0001f680
+```
+
+```{r kmeans-analysis-adhoc}
+topics_by_author_summary %>% group_by(assigned_cluster_10) %>% summarise(n_authors=n_distinct(author))
+
+# bots? 
+topics_by_author_summary %>% filter( assigned_cluster_8==4)
+# Topic distribution by Cluster: for each kmeans model => groupby cluster count (x_topics)
+# Average Author Comments by Cluster: for each kmeans model => groupby cluster, avg(group by author, sum (n_comments))
+```
+
+## Identify Topics: STM
+```{r stm-data}
+comment_stm_dfm <- convert(comment_dfm, to='stm')
+comment_stm_data <- prepDocuments(comment_stm_dfm$documents, comment_stm_dfm$vocab, meta = docvars(corp_comments), lower.thresh = 10)
+# lower.thresh min times a word needs to appear to be considered.
+```
+
+```{r stm-model}
+# comment_stm <- stm(comment_stm_data$documents, comment_stm_data$vocab, K=0, init.type="Spectral", prevalence = ~s(created_utc), data = comment_stm_data$meta, verbose = FALSE, seed=519 )
+#num_iters <- comment_stm_data$convergence$its
+#num_topics <- ncol(comment_stm_data$theta)
+
+#cat("There are", num_topics, "topics and it took", num_iters,  "iterations before the model converged.")
+```

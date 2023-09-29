@@ -1,5 +1,5 @@
 # reddit-investing-text-analysis
- A look at the WSB subreddit (and perhaps others) with topic modeling. A Text as Data (NYU CDS) final project.
+ A look at the WSB subreddit (and perhaps others) with topic modeling. A Text as Data (NYU CDS) final project from Spring 2021.
 
 #### APIs Used
 

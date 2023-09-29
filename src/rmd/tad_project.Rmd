@@ -1,0 +1,123 @@
+---
+title: "GME Final Project ScratchPad"
+author: "Amelia Chu"
+date: "2/27/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+sample_text = "Congress has been just as deep into the corrupt system as anyone else. If it's anything like the Panama papers and Epstein, nothing will happen and everyone forgets until the next crisis occurs."
+tokenized_speech_ngrams <- tokens(sample_text, remove_punct = TRUE)
+tokenized_speech_ngrams <- tokens_ngrams(tokenized_speech_ngrams, n = c(1L, 2L))
+# regex: for the regex, “2 or more” is {2,}
+```
+
+```{r,  echo=False}
+libraries <- c("ldatuning", "topicmodels", "ggplot2", "dplyr","utf8", "rjson", "quanteda", "lubridate", "parallel", "doParallel", "tidytext", "stringi", "tidyr","readtext")
+lapply(libraries, require, character.only = TRUE)
+```
+y embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+comments_data1 <- read.csv("/Users/ameliachu/Google\ Drive/Spring 2021/Text\ as\ Data/final_project/data/reddit/cleaned_comments_gme_mfoivk.csv")
+# original: comments_l7c6kb clear pronfanity and analysts in k=5
+nrow(comments_data1)
+names(comments_data1) <- c('doc_id','doc_name', 'text','score','author','created_utc')
+ind <- tail(comments_data1$doc_id, 1)
+comments_data2 <- read.csv("/Users/ameliachu/Google\ Drive/Spring 2021/Text\ as\ Data/final_project/data/reddit/cleaned_comments_daily_mqndra.csv")
+# original: comments_l7c6kb clear pronfanity and analysts in k=5
+nrow(comments_data2)
+names(comments_data2) <- c('doc_id','doc_name', 'text','score','author','created_utc')
+comments_data2$doc_id <- comments_data2$doc_id + ind + 1
+comments_data <- union_all(comments_data1, comments_data2)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+corp_comments <- corpus(comments_data)
+print(corp_comments)
+```
+
+```{r pressure, echo=FALSE}
+# summary(corp_comments)
+# dfm(corp_comments, remove = stopwords("english"), remove_punct = TRUE)
+corp_comments_tokens <- tokens(corp_comments)
+tokens_no_stop <- corp_comments_tokens %>% 
+  tokens_remove(pattern = stopwords("english"))
+textstat_collocations(tokens_no_stop)
+```
+
+```{r}
+
+comment_dfm <-dfm(comments_data$text, stem = F, remove_punct = T, tolower = T, remove_numbers= TRUE, remove = c(stopwords("english"), "http","https","rt", "t.co"))
+# comment_dfm2 <-dfm(comments_data2$text, stem = F, remove_punct = T, tolower = T, remove_numbers = TRUE, remove = c(stopwords("english"), "http","https","rt", "t.co"))
+
+# comment_dfm <- cbind(comment_dfm1, comment_dfm2)
+comment_dfm <- dfm_subset(comment_dfm, ntoken(  comment_dfm) > 0)
+
+```
+
+
+```{r}
+  k_optimize_comments <- FindTopicsNumber(
+  comment_dfm,
+  topics = seq(from = 2, to = 100, by = 2),
+  metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010", "Deveaud2014"),
+  method = "Gibbs",
+  control = list(seed = 1992),
+  mc.cores = detectCores(), # to us all cores available
+  verbose = TRUE
+)
+# Minimize: Griffiths and Cao
+# Maximize: Arun and Deveaud
+# How to use collocations in clustering, how to apply topic model to individual documents
+FindTopicsNumber_plot(k_optimize_comments)
+```
+
+```{r}
+k <- 6
+
+# Fit the topic model with the chosen k
+system.time(
+  comments_tm <- LDA(comment_dfm, k = k, method = "Gibbs",  control = list(seed = 1234)))
+```
+
+```{r}
+dim(comments_tm@gamma)
+comments_tm@gamma[1:5,1:5]
+rowSums(comments_tm@gamma) # each row sums to?
+
+# beta = topic distribution over words
+dim(comment_dfm)  # how many features do we have?
+dim(comments_tm@beta)
+comments_tm@beta[1:5,1:5]
+
+# Per topic per word proabilities matrix (beta)
+comments_topics <- tidy(comments_tm, matrix = "beta") 
+head(comments_topics)
+
+# Side note: You can pass objects between tidytext() and topicmodels() functions because tidytext() implements topic models from topicmodels()
+
+# Generates a df of top terms
+comments_top_terms <- comments_topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+head(comments_top_terms)
+```
+```{r}
+utf8_print("\U0001f680")
+```
+```{r}
+comments_top_terms%>%
+  mutate(term = reorder(term, beta)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip()
+```
